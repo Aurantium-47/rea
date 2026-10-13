@@ -108,6 +108,44 @@ const edgeFor = (
   return edge;
 };
 
+it.each(["\n", "\r", "\u2028", "\u2029"])(
+  "preserves line terminator %j when expanding dyld paths",
+  async (separator) => {
+    const directory = `Contents/Frame${separator}works`;
+    const direct = ["@loader_path", "@executable_path"].map(
+      (prefix) => `${prefix}/../Frame${separator}works/libdirect.dylib`,
+    );
+    const trace = await traceDylibLoading(
+      memoryView({
+        [MAIN]: executable({
+          rpaths: [`@loader_path/../Frame${separator}works`],
+          dependencies: [
+            ...direct.map((name) => dependency(name)),
+            dependency("@rpath/librpath.dylib"),
+          ],
+        }),
+        [`${directory}/libdirect.dylib`]: parsed(slice()),
+        [`${directory}/librpath.dylib`]: parsed(slice()),
+      }),
+      { roots: [MAIN] },
+    );
+    expect(
+      trace.edges.map(({ install_name, resolution }) => ({
+        install_name,
+        resolution,
+      })),
+    ).toEqual(
+      [...direct, "@rpath/librpath.dylib"].map((name, index) => ({
+        install_name: name,
+        resolution: {
+          status: "resolved",
+          image: `${directory}/${index < 2 ? "libdirect" : "librpath"}.dylib`,
+        },
+      })),
+    );
+  },
+);
+
 describe("dyld path expansion", () => {
   it("searches the loading image's rpaths before its loaders'", async () => {
     const core = "Contents/Frameworks/Core.framework/Versions/A/Core";

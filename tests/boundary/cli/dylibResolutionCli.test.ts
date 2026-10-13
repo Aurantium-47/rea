@@ -376,6 +376,54 @@ cliTest(
   },
 );
 
+cliTest(
+  "resolves dyld paths containing a Unicode line separator",
+  async ({ cli }) => {
+    const directory = await createTestTempDirectory("rea-dylib-line-cli-");
+    const libraryDirectory = "lib\u2028raries";
+    const names = [
+      `@loader_path/${libraryDirectory}/libhelper.dylib`,
+      `@executable_path/${libraryDirectory}/libhelper.dylib`,
+      "@rpath/libhelper.dylib",
+    ];
+    await writeFiles(directory, {
+      tool: machoImage({
+        commands: [
+          buildVersionCommand(1),
+          rpathCommand(`@loader_path/${libraryDirectory}`),
+          ...names.map((name) => dylibCommand(LC.LOAD_DYLIB, name)),
+        ],
+      }),
+      [`${libraryDirectory}/libhelper.dylib`]: machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      }),
+    });
+    const result = await cli.run({
+      arguments: ["trace-dylib-resolution", join(directory, "tool"), "--json"],
+      environment: ENVIRONMENT,
+    });
+    expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+    const trace = dylibResolutionResultSchema.parse(
+      parseEvidence(result.json).normalized_result,
+    );
+    expect(
+      trace.edges.map(({ install_name, resolution }) => ({
+        install_name,
+        resolution,
+      })),
+    ).toEqual(
+      names.map((name) => ({
+        install_name: name,
+        resolution: {
+          status: "resolved",
+          image: `${libraryDirectory}/libhelper.dylib`,
+        },
+      })),
+    );
+  },
+);
+
 describe.skipIf(process.getuid?.() === 0)(
   "trace-dylib-resolution permissions",
   () => {
